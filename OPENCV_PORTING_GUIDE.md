@@ -176,3 +176,51 @@
 
 이 순서로 진행하면 `opencv.cpp`의 현재 HALCON 스타일 코드를 OpenCV 4.6.0 스타일로
 안전하게 치환하면서 품질 회귀를 통제할 수 있다.
+
+---
+
+## 12) 호출 방식 예시 (HALCON 호출 코드 → OpenCV 호출 코드)
+
+아래 HALCON 코드:
+
+```cpp
+int i_OmitRate = 0, i_OmitCnt = 0;
+
+HObject ho_RegionDifference1 = omit_process->Run(layer_omit_process, ho_Image, ho_OmitRoi, &ho_Omit_STDEV_Region);
+HObject ho_omit_stdev_image = omit_process->GetStdDevImage(layer_omit_process, ho_Image);
+HObject ho_SelectedRegions1 = omit_process->GetSharedSelectedRegion(layer_omit_process, ho_RegionDifference1, ho_OmitRoi);
+OverpaintRegion(ho_omit_stdev_image, ho_SelectedRegions1, 255, "fill");
+omit_process->CalcOmitDefectData(ho_OmitRoi, ho_SelectedRegions1, i_OmitCnt, i_OmitRate);
+```
+
+OpenCV 포팅 버전 예시:
+
+```cpp
+#include "omit_process_opencv.h"
+
+COmitProcessOpenCV omit_process;
+
+int i_OmitRate = 0;
+int i_OmitCnt = 0;
+
+// 입력: cv::Mat grayImage(CV_8U), cv::Mat omitRoiMask(CV_8U, 0/255)
+// recipe: Json::Value layer_omit_process
+
+cv::Mat stdevRegion;
+cv::Mat regionDifference = omit_process.Run(layer_omit_process, grayImage, omitRoiMask, &stdevRegion);
+
+cv::Mat omitStdevImage = omit_process.GetStdDevImage(layer_omit_process, grayImage);
+cv::Mat selectedRegions = omit_process.GetSharedSelectedRegion(layer_omit_process, regionDifference, omitRoiMask);
+
+// HALCON OverpaintRegion(..., 255, "fill") 대응
+omitStdevImage.setTo(255, selectedRegions);
+
+omit_process.CalcOmitDefectData(omitRoiMask, selectedRegions, i_OmitCnt, i_OmitRate);
+```
+
+### 포인트
+
+- `HObject` 대신 `cv::Mat`을 사용한다.
+- Region은 반드시 `CV_8U` mask(0/255) 형태로 맞춘다.
+- `OverpaintRegion(..., 255, "fill")`는 `dst.setTo(255, mask)`로 대응한다.
+- `Run`의 4번째 인자(STDEV 출력)는 `cv::Mat*`로 동일하게 out-parameter 스타일을 유지했다.

@@ -224,3 +224,55 @@ omit_process.CalcOmitDefectData(omitRoiMask, selectedRegions, i_OmitCnt, i_OmitR
 - Region은 반드시 `CV_8U` mask(0/255) 형태로 맞춘다.
 - `OverpaintRegion(..., 255, "fill")`는 `dst.setTo(255, mask)`로 대응한다.
 - `Run`의 4번째 인자(STDEV 출력)는 `cv::Mat*`로 동일하게 out-parameter 스타일을 유지했다.
+
+---
+
+## 13) 기존 시퀀스에 붙일 때 핵심 ("전체 이미지 검사" 방지)
+
+질문 코드에서 OpenCV 블록이 전체영역처럼 보이는 가장 큰 원인은 ROI를 아래처럼 0으로만 만들었기 때문입니다.
+
+```cpp
+cv::Mat mat_OmitRoi = cv::Mat::zeros(mat_Image.size(), CV_8UC1);
+```
+
+이 방식 대신 반드시 **기존 HALCON ROI와 동일한 마스크**를 넘겨야 합니다.
+
+### 권장 실행 구조
+
+```cpp
+COmitProcessOpenCV omit_process_cv;
+CHalconMath halcon;
+
+HTuple w, h;
+cv::Mat mat_Image = halcon.HimageToCvmat(ho_Image, w, h); // gray image
+
+// 1) 기존과 동일하게 HALCON에서 Omit ROI를 먼저 구함
+HObject ho_OmitRoi = omit_process->GetInspectionRoi(layer_omit_process, ho_Image);
+
+// 2) ho_OmitRoi(region) -> cv::Mat mask(0/255) 변환
+HObject ho_OmitRoiBin;
+RegionToBin(ho_OmitRoi, &ho_OmitRoiBin, 255, 0, w, h);
+HTuple rw, rh;
+cv::Mat mat_OmitRoi = halcon.HimageToCvmat(ho_OmitRoiBin, rw, rh);
+
+// 3) OpenCV Omit Process 실행 (ROI 전달)
+cv::Mat stdevRegion;
+cv::Mat regionDifference = omit_process_cv.Run(layer_omit_process, mat_Image, mat_OmitRoi, &stdevRegion);
+
+cv::Mat omitStdevImage = omit_process_cv.GetStdDevImage(layer_omit_process, mat_Image);
+cv::Mat selectedRegions = omit_process_cv.GetSharedSelectedRegion(layer_omit_process, regionDifference, mat_OmitRoi);
+
+// HALCON OverpaintRegion 대응
+omitStdevImage.setTo(255, selectedRegions);
+
+int i_OmitCnt = 0;
+int i_OmitRate = 0;
+omit_process_cv.CalcOmitDefectData(mat_OmitRoi, selectedRegions, i_OmitCnt, i_OmitRate);
+```
+
+### 체크포인트
+
+- `mat_OmitRoi`는 `CV_8U`, 값은 `0/255`로 맞출 것.
+- `mat_OmitRoi` 크기는 `mat_Image.size()`와 동일해야 함.
+- `Run(..., roiMask, ...)`, `GetSharedSelectedRegion(..., roiMask)`, `CalcOmitDefectData(roiMask, ...)`에 **동일한 ROI 마스크**를 넣어야 함.
+- 디버깅 시 `cv::imwrite(".../roi.jpg", mat_OmitRoi);`를 먼저 저장해서 ROI가 맞는지 확인.
